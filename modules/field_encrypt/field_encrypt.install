@@ -1,0 +1,66 @@
+<?php
+
+/**
+ * @file
+ * Field Encrypt module install/schema/update hooks.
+ */
+
+use Drupal\Component\Render\FormattableMarkup;
+
+/**
+ * Implements hook_install().
+ */
+function field_encrypt_install($is_syncing) {
+  // This might be set by previous versions of the module so ensure it is a
+  // clean value.
+  \Drupal::state()->set('field_encrypt.entity_types', []);
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function field_encrypt_uninstall($is_syncing) {
+  \Drupal::state()->delete('field_encrypt.entity_types');
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function field_encrypt_requirements($phase) {
+  $requirements = [];
+
+  if ($phase === 'update' || $phase === 'runtime') {
+    if ((int) drupal_get_installed_schema_version('field_encrypt') < 8300) {
+      $requirements['field_encrypt_update_to_v3'] = [
+        'title' => t('Field Encrypt'),
+        'severity' => REQUIREMENT_ERROR,
+        'value' => t('Update to field_encrypt version 3 is not supported.'),
+        'description' => t('In order to upgrade you need to decrypt all your data on the previous version and uninstall the module.'),
+      ];
+    }
+  }
+
+  // Runtime checks can use module functions.
+  if ($phase === 'runtime' && !_field_encrypt_can_eval()) {
+    $functions = _field_encrypt_entity_hooks();
+    if ($functions) {
+      $functions = new FormattableMarkup('<br/><pre>@functions</pre>', ['@functions' => $functions]);
+      $requirements['field_encrypt_entity_hooks'] = [
+        'title' => t('Field Encrypt entity hooks'),
+        'severity' => REQUIREMENT_WARNING,
+        'value' => t('Unable to dynamically create entity hooks'),
+        'description' => t('In order to use Field Encrypt the following methods need to be defined:@functions', ['@functions' => $functions]),
+      ];
+    }
+  }
+  return $requirements;
+}
+
+/**
+ * Implements hook_update_last_removed().
+ */
+function field_encrypt_update_last_removed() {
+  // This update never existed but this enforces new installs of the module get
+  // the correct schema version.
+  return 8300;
+}

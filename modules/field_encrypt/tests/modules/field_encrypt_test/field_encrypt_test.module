@@ -1,0 +1,72 @@
+<?php
+
+/**
+ * @file
+ * Contains module hooks for field_encrypt_test.
+ */
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\node\NodeInterface;
+
+/**
+ * Implements hook_entity_update().
+ */
+function field_encrypt_test_entity_update(EntityInterface $entity) {
+  if ($entity instanceof NodeInterface) {
+    \Drupal::messenger()->addMessage(t('Field encrypt test hook_entity_update: @label', ['@label' => $entity->label()]));
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update().
+ */
+function field_encrypt_test_node_update(EntityInterface $entity) {
+  \Drupal::messenger()->addMessage(t('Field encrypt test hook_ENTITY_TYPE_update: @label', ['@label' => $entity->label()]));
+}
+
+/**
+ * Implements hook_entity_insert().
+ */
+function field_encrypt_test_entity_insert(EntityInterface $entity) {
+  if ($entity instanceof NodeInterface) {
+    \Drupal::messenger()->addMessage(t('Field encrypt test hook_entity_insert: @label', ['@label' => $entity->label()]));
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert().
+ */
+function field_encrypt_test_node_insert(EntityInterface $entity) {
+  \Drupal::messenger()->addMessage(t('Field encrypt test hook_ENTITY_TYPE_insert: @label', ['@label' => $entity->label()]));
+}
+
+/**
+ * Implements hook_entity_delete().
+ */
+function field_encrypt_test_entity_delete(EntityInterface $entity) {
+  if ($entity instanceof NodeInterface) {
+    \Drupal::messenger()->addMessage(t('Field encrypt test hook_entity_delete: @label', ['@label' => $entity->label()]));
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete().
+ */
+function field_encrypt_test_node_delete(EntityInterface $entity) {
+  \Drupal::messenger()->addMessage(t('Field encrypt test hook_ENTITY_TYPE_delete: @label', ['@label' => $entity->label()]));
+}
+
+/**
+ * Implements hook_entity_base_field_info().
+ */
+function field_encrypt_test_entity_base_field_info(EntityTypeInterface $entity_type) {
+  $fields = [];
+
+  if ($entity_type->id() === 'node' && \Drupal::state()->get('field_encrypt.create_base_field', FALSE)) {
+    $fields['field_encrypt_test_base_field'] = BaseFieldDefinition::create('string')
+      ->setLabel('Field Encrypt test base field');
+  }
+  return $fields;
+}

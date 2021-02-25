@@ -1,0 +1,416 @@
+<?php
+
+/**
+ * @file
+ * Contains module hooks for field_encrypt.
+ */
+
+use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\Display\EntityViewDisplayInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Site\Settings;
+use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\field_encrypt\ProcessEntities;
+use Drupal\field_encrypt\StateManager;
+use Drupal\encrypt\Entity\EncryptionProfile;
+
+/**
+ * Implements hook_form_alter().
+ *
+ * Adds settings to the field storage configuration forms to allow setting the
+ * encryption state.
+ */
+function field_encrypt_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+
+  // If this is the add or edit form for field_storage, we call our function.
+  if ($form_id === 'field_storage_add_form' || $form_id === 'field_storage_config_edit_form') {
+
+    // Check permissions.
+    $user = \Drupal::currentUser();
+    if ($user->hasPermission('administer field encryption')) {
+      /** @var \Drupal\field\Entity\FieldStorageConfig $field */
+      $field = $form_state->getFormObject()->getEntity();
+      $field_type = $field->getType();
+      $default_properties = \Drupal::config('field_encrypt.settings')->get('default_properties');
+
+      // Add container for field_encrypt specific settings.
+      $form['field_encrypt'] = [
+        '#type' => 'details',
+        '#title' => t('Field encryption'),
+        '#open' => TRUE,
+      ];
+
+      // Display a warning about changing field data.
+      if ($form_id == "field_storage_config_edit_form" && $field->hasData()) {
+        $form['field_encrypt']['#prefix'] = '<div class="messages messages--warning">' . t('Warning: changing field encryption settings may cause data corruption!<br />When changing these settings, existing fields will be (re)encrypted in batch according to the new settings. <br />Make sure you have a proper backup, and do not perform this action in an environment where the data will be changing during the batch operation, to avoid data loss.') . '</div>';
+      }
+
+      $form['field_encrypt']['field_encrypt'] = [
+        '#type' => 'container',
+        '#tree' => TRUE,
+      ];
+
+      // Add setting to decide if field should be encrypted.
+      $form['field_encrypt']['field_encrypt']['encrypt'] = [
+        '#type' => 'checkbox',
+        '#title' => t('Encrypt field'),
+        '#description' => t('Makes the field storage encrypted.'),
+        '#default_value' => $field->getThirdPartySetting('field_encrypt', 'encrypt', FALSE),
+      ];
+
+      $properties = [];
+      $definitions = $field->getPropertyDefinitions();
+      foreach ($definitions as $property => $definition) {
+        $properties[$property] = $definition->getLabel();
+      }
+
+      $field_encrypt_default = isset($default_properties[$field_type]) ? $default_properties[$field_type] : [];
+      $form['field_encrypt']['field_encrypt']['properties'] = [
+        '#type' => 'checkboxes',
+        '#title' => t('Properties'),
+        '#description' => t('Specify the field properties to encrypt.'),
+        '#options' => $properties,
+        '#default_value' => $field->getThirdPartySetting('field_encrypt', 'properties', $field_encrypt_default),
+        '#states' => [
+          'visible' => [
+            ':input[name="field_encrypt[encrypt]"]' => ['checked' => TRUE],
+          ],
+        ],
+      ];
+
+      // We add functions to process the form when it is saved.
+      $form['#entity_builders'][] = 'field_encrypt_form_field_add_form_builder';
+    }
+  }
+}
+
+/**
+ * Update the field storage configuration to set the encryption state.
+ *
+ * @param string $entity_type
+ *   The entity type.
+ * @param \Drupal\field\Entity\FieldStorageConfig $field_storage_config
+ *   The field storage config entity.
+ * @param array $form
+ *   The complete form array.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The current state of the form.
+ */
+function field_encrypt_form_field_add_form_builder($entity_type, FieldStorageConfig $field_storage_config, array &$form, FormStateInterface $form_state) {
+  $field_encryption_settings = $form_state->getValue('field_encrypt');
+  $field_encryption_settings['encrypt'] = (bool) $field_encryption_settings['encrypt'];
+
+  // If the form has the value, we set it.
+  if ($field_encryption_settings['encrypt']) {
+    foreach ($field_encryption_settings as $settings_key => $settings_value) {
+      $field_storage_config->setThirdPartySetting('field_encrypt', $settings_key, $settings_value);
+    }
+  }
+  else {
+    // If there is no value, remove third party settings.
+    $field_storage_config->unsetThirdPartySetting('field_encrypt', 'encrypt');
+    $field_storage_config->unsetThirdPartySetting('field_encrypt', 'properties');
+  }
+}
+
+/**
+ * Implements hook_entity_view().
+ */
+function field_encrypt_entity_view(array &$build, EntityInterface $entity, EntityViewDisplayInterface $display, $view_mode) {
+  if (field_encrypt_has_encrypted_fields($entity) && \Drupal::config('field_encrypt.settings')->get('make_entities_uncacheable')) {
+    \Drupal::service('field_encrypt.process_entities')->entitySetCacheTags($entity, $build);
+  }
+}
+
+/**
+ * Implements hook_entity_presave().
+ *
+ * Encrypt entity fields before they are saved.
+ */
+function field_encrypt_entity_presave(EntityInterface $entity) {
+  if (field_encrypt_has_encrypted_fields($entity)) {
+    \Drupal::service('field_encrypt.process_entities')->encryptEntity($entity);
+  }
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function field_encrypt_entity_update(EntityInterface $entity) {
+  if (!_field_encrypt_can_eval() && field_encrypt_has_encrypted_fields($entity)) {
+    \Drupal::service('field_encrypt.process_entities')->decryptEntity($entity);
+  }
+}
+
+/**
+ * Implements hook_entity_insert().
+ */
+function field_encrypt_entity_insert(EntityInterface $entity) {
+  if (!_field_encrypt_can_eval() && field_encrypt_has_encrypted_fields($entity)) {
+    \Drupal::service('field_encrypt.process_entities')->decryptEntity($entity);
+  }
+}
+
+/**
+ * Implements hook_entity_storage_load().
+ *
+ * Decrypt entity fields when loading entities.
+ */
+function field_encrypt_entity_storage_load($entities, $entity_type) {
+  if (!field_encrypt_has_encrypted_fields(current($entities))) {
+    return;
+  }
+
+  /** @var \Drupal\field_encrypt\ProcessEntities $field_encrypt_process_entities */
+  $field_encrypt_process_entities = \Drupal::service('field_encrypt.process_entities');
+
+  foreach ($entities as $entity) {
+    $field_encrypt_process_entities->decryptEntity($entity);
+  }
+}
+
+/**
+ * Verify if the given entity has encrypted fields.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The entity to check.
+ *
+ * @return bool
+ *   Boolean indicating whether has encrypted fields.
+ */
+function field_encrypt_has_encrypted_fields(EntityInterface $entity) {
+  // We can only encrypt content entities.
+  if (!$entity instanceof ContentEntityInterface) {
+    return FALSE;
+  }
+  // @todo compare performance with
+  //   $entity->hasField(static::ENCRYPTED_FIELD_STORAGE_NAME).
+  return in_array($entity->getEntityTypeId(), \Drupal::state()->get('field_encrypt.entity_types', []), TRUE);
+}
+
+/**
+ * Implements hook_entity_type_alter().
+ *
+ * @see \Drupal\field_encrypt\EventSubscriber\ConfigSubscriber::onConfigSave()
+ * @see \Drupal\field_encrypt\StateManager::update()
+ */
+function field_encrypt_entity_type_alter(array &$entity_types) {
+  if (\Drupal::config('field_encrypt.settings')->get('make_entities_uncacheable')) {
+    // Exclude entities from cache if they contain an encrypted field.
+    foreach (\Drupal::state()->get('field_encrypt.entity_types', []) as $entity_type) {
+      // Ignore entity types that do not exist. This is defensive coding.
+      if (isset($entity_types[$entity_type])) {
+        $entity_types[$entity_type]->set('render_cache', FALSE);
+        $entity_types[$entity_type]->set('persistent_cache', FALSE);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_base_field_info().
+ */
+function field_encrypt_entity_base_field_info(EntityTypeInterface $entity_type) {
+  $encrypted_types = \Drupal::state()->get('field_encrypt.entity_types');
+  if (isset($encrypted_types[$entity_type->id()])) {
+    $fields[ProcessEntities::ENCRYPTED_FIELD_STORAGE_NAME] = StateManager::getEncryptedFieldStorageDefinition();
+    return $fields;
+  }
+}
+
+/**
+ * Implements hook_entity_base_field_info_alter().
+ */
+function field_encrypt_entity_base_field_info_alter(&$fields, EntityTypeInterface $entity_type) {
+  /** @var \Drupal\Core\Field\BaseFieldDefinition[] $fields */
+  /** @var \Drupal\field_encrypt\Entity\FieldEncryptEntityType $field_encrypt_settings */
+  $field_encrypt_settings = \Drupal::entityTypeManager()->getStorage('field_encrypt_entity_type')->load($entity_type->id());
+  if ($field_encrypt_settings) {
+    foreach ($field_encrypt_settings->getBaseFields() as $field_name => $encrypted_properties) {
+      if (isset($fields[$field_name])) {
+        $fields[$field_name]->setSetting('field_encrypt.encrypt', TRUE);
+        $fields[$field_name]->setSetting('field_encrypt.properties', $encrypted_properties);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_cron().
+ */
+function field_encrypt_cron() {
+  // Clean up any unused encrypted field storage field if necessary.
+  \Drupal::service('field_encrypt.state_manager')->removeStorageFields();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete().
+ */
+function field_encrypt_encryption_profile_predelete(EncryptionProfile $profile) {
+  // Prevent encryption profiles from being deleted if they are in use.
+  if ($profile->id() === \Drupal::config('field_encrypt.settings')->get('encryption_profile')) {
+    throw new \RuntimeException(sprintf('Cannot delete %s encryption profile because it is the default for the field_encrypt module', $profile->id()));
+  }
+
+  $entity_types = \Drupal::state()->get('field_encrypt.entity_types', []);
+  $entity_type_manager = \Drupal::entityTypeManager();
+  foreach ($entity_types as $entity_type_id) {
+    if (!$entity_type_manager->hasDefinition($entity_type_id)) {
+      continue;
+    }
+    $query = $entity_type_manager->getStorage($entity_type_id)->getQuery();
+    $query->condition(ProcessEntities::ENCRYPTED_FIELD_STORAGE_NAME . '.encryption_profile', $profile->id());
+    if ($entity_type_manager->getDefinition($entity_type_id)->isRevisionable()) {
+      $query->allRevisions();
+    }
+    if ($query->count()->execute() > 0) {
+      throw new \RuntimeException(sprintf('Cannot delete %s encryption profile because it is in-use by %s entities', $profile->id(), $entity_type_id));
+    };
+  }
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ *
+ * The Field Encrypt module decrypts and encrypts entity data by implementing
+ * regular entity hooks. The order in which the hooks are fired determines
+ * whether the entity data is encrypted or decrypted. It is important for that
+ * for other implementations of these hooks that data is encrypted and decrypted
+ * at the right time.
+ * - field_encrypt_entity_storage_load() needs to be the first implementation
+ *   of hook_entity_storage_load() so other implementations can use decrypted
+ *   data.
+ * - field_encrypt_entity_presave() needs to be the last implementation of
+ *   hook_entity_presave() so other implementations can use decrypted
+ *   data.
+ * - field_encrypt_entity_insert() and field_encrypt_entity_update() can not
+ *   be triggered in the correct location as hook_ENTITY_TYPE_insert() and
+ *   hook_ENTITY_TYPE_update() are triggered first. Field encrypt tries to get
+ *   around this by dynamically declaring hook_ENTITY_TYPE_insert() and
+ *   hook_ENTITY_TYPE_update() implementations.
+ *
+ * @see field_encrypt_entity_storage_load()
+ * @see field_encrypt_entity_presave()
+ * @see field_encrypt_entity_insert()
+ * @see field_encrypt_entity_update()
+ * @see _field_encrypt_define_entity_hooks()
+ * @see \Drupal\Core\Entity\EntityStorageBase::invokeHook()
+ */
+function field_encrypt_module_implements_alter(&$implementations, $hook) {
+  if ($hook == 'entity_presave') {
+    // Move our implementation as late as possible so other implementations work
+    // with decrypted data.
+    $group = $implementations['field_encrypt'];
+    unset($implementations['field_encrypt']);
+    $implementations['field_encrypt'] = $group;
+  }
+  elseif ($hook == 'entity_storage_load' || $hook == 'entity_insert' || $hook == 'entity_update') {
+    // Move our implementations as early as possible so other implementations
+    // work with decrypted data.
+    $group = $implementations['field_encrypt'];
+    $implementations = ['field_encrypt' => $group] + $implementations;
+  }
+  elseif (preg_match('/_(insert|update)$/', $hook)) {
+    foreach (\Drupal::state()->get('field_encrypt.entity_types', []) as $entity_type_id) {
+      if ($hook == $entity_type_id . '_insert' || $hook == $entity_type_id . '_update') {
+        // Move our implementations as early as possible so other
+        // implementations work with decrypted data.
+        if (!isset($implementations['field_encrypt'])) {
+          _field_encrypt_define_entity_hooks($entity_type_id);
+        }
+        $group = $implementations['field_encrypt'] ?? FALSE;
+        $implementations = ['field_encrypt' => $group] + $implementations;
+      }
+    }
+  }
+}
+
+/**
+ * Creates entity hooks for entity types with encrypted fields.
+ *
+ * @param string $entity_type_id
+ *   (optional) The entity type to create hooks for. If omitted hooks will be
+ *   registered for all entity types with encrypted fields.
+ *
+ * @see field_encrypt_module_implements_alter()
+ */
+function _field_encrypt_define_entity_hooks($entity_type_id = NULL) {
+  if (!_field_encrypt_can_eval()) {
+    return;
+  }
+  $functions = _field_encrypt_entity_hooks($entity_type_id);
+  if ($functions) {
+    // Register entity hooks.
+    // phpcs:disable Drupal.Functions.DiscouragedFunctions.Discouraged
+    eval($functions);
+    // phpcs:enable
+  }
+}
+
+/**
+ * Generates PHP code to define necessary entity hooks.
+ *
+ * @param string $entity_type_id
+ *   (optional) The entity type to generate hooks for. If omitted code will be
+ *   generated for all entity types with encrypted fields.
+ *
+ * @return string
+ *   The PHP code.
+ */
+function _field_encrypt_entity_hooks($entity_type_id = NULL) {
+  $functions = '';
+  $entity_types = $entity_type_id ? [$entity_type_id] : \Drupal::state()->get('field_encrypt.entity_types', []);
+  foreach ($entity_types as $entity_type_id) {
+    // We're going to use eval() to create functions. This check ensures no
+    // interesting have got into the entity type ID that would result in running
+    // unexpected PHP code. Under normal operation this is not possible but we
+    // assume the worst.
+    if (preg_match('/[^A-Za-z0-9_]+/', $entity_type_id)) {
+      throw new RuntimeException(sprintf('"%s" entity type contains unexpected characters', $entity_type_id));
+    }
+    if (!function_exists("field_encrypt_{$entity_type_id}_insert")) {
+      $functions .= <<<EOF
+/**
+ * Implements hook_ENTITY_TYPE_insert().
+ */
+function field_encrypt_{$entity_type_id}_insert(Drupal\Core\Entity\EntityInterface \$entity) {
+  \Drupal::service('field_encrypt.process_entities')->decryptEntity(\$entity);
+}
+/**
+ * Implements hook_ENTITY_TYPE_update().
+ */
+function field_encrypt_{$entity_type_id}_update(Drupal\Core\Entity\EntityInterface \$entity) {
+  \Drupal::service('field_encrypt.process_entities')->decryptEntity(\$entity);
+}
+EOF;
+    }
+  }
+  return $functions;
+}
+
+/**
+ * Determines if eval() is enabled on this PHP installation.
+ *
+ * Several PHP extensions disable eval() as a security measure therefore we
+ * cannot assume it is available. The setting
+ * 'field_encrypt.use_eval_for_entity_hooks' provides a way for sites to disable
+ * this feature and add the hooks to a custom module. The code they need to add
+ * is provided on admin/reports/status. This will improve performance as code
+ * generated via eval() cannot be opcached.
+ *
+ * @return bool
+ *   Whether eval() is available.
+ */
+function _field_encrypt_can_eval() {
+  $can_eval = Settings::get('field_encrypt.use_eval_for_entity_hooks', TRUE);
+  // If you are using either of these extensions assume eval() is not available.
+  if ($can_eval && (extension_loaded('snuffleupagus') || extension_loaded('diseval'))) {
+    $can_eval = FALSE;
+  }
+  return $can_eval;
+}
+
+// Dynamically define entity hooks if permitted.
+_field_encrypt_define_entity_hooks();

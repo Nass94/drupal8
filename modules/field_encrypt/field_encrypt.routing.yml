@@ -1,0 +1,50 @@
+field_encrypt.settings:
+  path: '/admin/config/system/field-encrypt'
+  defaults:
+    _form: '\Drupal\field_encrypt\Form\SettingsForm'
+    _title: 'Field Encrypt settings'
+  requirements:
+    _permission: 'administer field encryption'
+
+field_encrypt.settings.entity_type:
+  path: '/admin/config/system/field-encrypt/entity-types/{entity_type_id}'
+  defaults:
+    _form: '\Drupal\field_encrypt\Form\EntityTypeForm'
+    _title: 'Field Encrypt entity type settings'
+    entity_type_id: ''
+  requirements:
+    _permission: 'administer field encryption'
+
+field_encrypt.update_encryption_profile_confirm:
+  path: '/admin/config/system/field-encrypt/entity-types/{entity_type}/update_encryption_profile/{encryption_profile}'
+  defaults:
+    _form: 'Drupal\field_encrypt\Form\UpdateEncryptionProfileForm'
+  options:
+    parameters:
+      encryption_profile:
+        type: 'entity:encryption_profile'
+  requirements:
+    _permission: 'administer field encryption'
+
+field_encrypt.process_queue:
+  path: '/admin/config/system/field-encrypt/process-queues'
+  defaults:
+    _form: '\Drupal\field_encrypt\Form\ProcessQueueForm'
+    _title: 'Process queued updates'
+  requirements:
+    _permission: 'administer field encryption'
+
+field_encrypt.field_overview:
+  path: '/admin/config/system/field-encrypt/field-overview'
+  defaults:
+    _controller: '\Drupal\field_encrypt\Controller\FieldOverviewController::overview'
+  requirements:
+    _permission: 'administer field encryption'
+
+field_encrypt.field_decrypt_confirm:
+  path: '/admin/config/system/field-encrypt/field-decrypt/{entity_type}/{field_name}/{base_field}'
+  defaults:
+    _form: 'Drupal\field_encrypt\Form\DecryptFieldForm'
+    base_field: false
+  requirements:
+    _permission: 'administer field encryption'

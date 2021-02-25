@@ -1,0 +1,16 @@
+name: Field Encrypt
+type: module
+description: Extends the Field API to allow encryption of fields.
+configure: 'field_encrypt.settings'
+core_version_requirement: ^8.7.7 || ^9
+package: Encryption
+dependencies:
+  - encrypt:encrypt
+  - drupal:field
+test_dependencies:
+  - commerce:commerce
+
+# Information added by Drupal.org packaging script on 2020-11-26
+version: '3.0.0-alpha2'
+project: 'field_encrypt'
+datestamp: 1606394138

@@ -1,0 +1,13 @@
+name: Sodium
+description: "Allows data to be encrypted and decrypted using the Sodium PHP extension."
+core_version_requirement: ^8.9.0 || ^9.0
+type: module
+package: Security
+php: 7.2
+dependencies:
+  - encrypt:encrypt
+
+# Information added by Drupal.org packaging script on 2020-10-29
+version: '8.x-2.1'
+project: 'sodium'
+datestamp: 1603940738

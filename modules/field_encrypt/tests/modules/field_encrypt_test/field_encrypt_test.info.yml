@@ -1,0 +1,11 @@
+name: 'Field Encrypt Test module'
+type: module
+description: 'Test module for Field Encrypt'
+package: Testing
+dependencies:
+  - field_encrypt:field_encrypt
+
+# Information added by Drupal.org packaging script on 2020-11-26
+version: '3.0.0-alpha2'
+project: 'field_encrypt'
+datestamp: 1606394138

@@ -1,0 +1,19 @@
+field_encrypt.settings:
+  route_name: field_encrypt.settings
+  title: Settings
+  base_route: field_encrypt.settings
+
+field_encrypt.field_overview:
+  route_name: field_encrypt.field_overview
+  title: Encrypted fields overview
+  base_route: field_encrypt.settings
+
+field_encrypt.entity_type:
+  route_name: field_encrypt.settings.entity_type
+  title: Encrypted fields entity type settings
+  base_route: field_encrypt.settings
+
+field_encrypt.process_queue:
+  route_name: field_encrypt.process_queue
+  title: Process queues
+  base_route: field_encrypt.settings

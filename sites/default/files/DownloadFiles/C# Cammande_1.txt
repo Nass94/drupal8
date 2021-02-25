@@ -1,0 +1,36 @@
+Declare Dictionnary
+ IDictionary<char, int> numberChar = new Dictionary<char, int>();
+ 
+ check if key are in dictionnary
+ numberChar.ContainsKey(c)
+ 
+ Edit value of key in Dictionary
+ numberChar[c] = ++numberChar[c];
+ 
+ 
+ Add key to Dictionary
+  numberChar[c]=x
+  
+Print Dictionnary
+   foreach (KeyValuePair<char, int> kvp in numberChar)
+            {
+                
+                Console.WriteLine("Key = {0}, Value = {1}", kvp.Key, kvp.Value);
+            }
+			
+			
+// TWO LOWST IN ARRAY 
+int low1 = numbers[0];
+            int low2 = numbers[1];
+            for(int i = 2; i < numbers.Length; i++)
+            {
+                if (low1 > numbers[i]) 
+                {
+                    if (low2 > low1)
+                    {
+                        low2 = low1;
+                    }
+                    low1 = numbers[i];
+                    continue;
+                    }
+                if(low2>numbers[i])    { low2 = numbers[i]; }

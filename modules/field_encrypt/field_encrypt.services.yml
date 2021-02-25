@@ -1,0 +1,14 @@
+services:
+  field_encrypt.process_entities:
+    class: Drupal\field_encrypt\ProcessEntities
+    arguments: ['@module_handler']
+
+  field_encrypt.config_subscriber:
+    class: Drupal\field_encrypt\EventSubscriber\ConfigSubscriber
+    arguments: ['@entity_type.manager', '@queue', '@field_encrypt.state_manager', '@string_translation', '@messenger']
+    tags:
+      - { name: event_subscriber }
+
+  field_encrypt.state_manager:
+    class: Drupal\field_encrypt\StateManager
+    arguments: ['@entity_type.manager', '@queue', '@state', '@entity.last_installed_schema.repository', '@entity.definition_update_manager', '@module_handler']
